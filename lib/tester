@@ -1,0 +1,6 @@
+declare -A distros
+. ./build.lib
+LINUX_DISTRO=arch
+BDIR=../
+get_distro
+echo $BASE_IMAGE

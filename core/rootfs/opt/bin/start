@@ -1,0 +1,26 @@
+#!/bin/bash
+#***** CONTAINER DEFAULT CUSTOM SCRIPT ******************" 
+echo "------ EXAMPLE 'start' command script -----"
+echo replace with your /opt/bin/start or use 
+echo "export ENTRYPOINT_CMD=mycmd"
+echo "export ENTRYPOINT_CMD_PATH=\$BIN_DIR/mycmd"
+echo and supply a init/opt/mycmd in your source
+echo "---------------"
+case "$1" in
+sub1)
+echo "this is the 'start' subcommand 'sub2' "
+echo with arguments $@
+;;
+sub2) 
+shift 1
+echo "this is the 'start' subcommand 'sub2' "
+echo with arguments $@
+;;
+*)
+echo  
+echo "running this command $*" 
+echo "via the 'start' command"
+echo  within a login shell
+/bin/bash -l -c '"$@"' $0 "$@"
+esac
+echo "done------ EXAMPLE 'start' command script -----"

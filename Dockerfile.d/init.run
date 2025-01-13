@@ -1,0 +1,5 @@
+# INITIALIZATION
+RUN --mount=type=bind,source=.src/init,target=/build \
+<<eot
+.INCLUDE init.tpl
+eot

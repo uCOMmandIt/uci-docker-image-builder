@@ -1,0 +1,12 @@
+#!/bin/bash
+vdirs=${1:-$VOLUME_DIRS}
+if [[ $vdirs ]]; then
+  echo changing ownership of directories $vdirs
+  vgroup=host
+  [[ ! $USER = "root" && $USER ]]; vgroup=$USER 
+  vmap=${HOST_MAP:-host:$vgroup} 
+  echo to $vmap
+  declare usesudo
+  [[ ! $USER = "root" ]] && usesudo=sudo 
+  $usesudo chown -R $vmap $vdirs
+fi 

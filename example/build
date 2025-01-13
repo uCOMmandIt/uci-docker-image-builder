@@ -1,0 +1,3 @@
+#!/bin/bash
+# you can make a custom command line build call like using -e.  need to change udib (the default) to whatever you installed
+udib "$@"

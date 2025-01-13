@@ -1,0 +1,9 @@
+#!/bin/bash
+if [[ $USER ]]; then
+  UHID=${UHID:-1000}
+  if [[ ! $(id -un $UHID) ]]; then
+  groupmod -g $UHID $USER
+  usermod -u $UHID -g $UHID $USER
+  chown -R -h $UHID:$UHID /opt $1 $VOLUME_DIRS
+  fi
+fi

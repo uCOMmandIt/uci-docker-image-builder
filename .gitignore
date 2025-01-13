@@ -1,0 +1,11 @@
+archive/
+.src
+TODO.md
+core/custom
+logs/
+Dockerfile
+.env
+.vscode/
+example/mnt
+example/logs/**
+test/

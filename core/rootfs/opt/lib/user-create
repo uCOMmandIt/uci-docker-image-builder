@@ -1,0 +1,76 @@
+#!/bin/bash
+USER=${1:-$USER}
+USER_PW=${2-$USER_PW}
+UHID=${UHID:-1000}
+
+# TODO make SUDO conditional on USER_SUDO=true
+
+if [[ $USER ]]; then
+echo "------- Adding USER: $USER with ID: $UHID ------"
+
+cat <<DOC >> /etc/login.defs
+SYS_UID_MAX   $UHID"
+SYS_GID_MAX   $UHID"
+DOC
+
+    source $LIB_DIR/verbose.lib
+    # echo loading acl package
+    # silence $INSTALL_PKGS acl
+    groupadd -g $UHID $USER
+    
+    # user passwords implies system (sudo) login user
+        if [[ $USER_PW ]]; then
+        echo "$USER is being created as a login user"
+
+        USER_HOME=${USER_HOME:-/home/$USER}
+        echo creating and setting a non-login user home
+        mkdir -p $USER_HOME
+        chown $USER:$USER $USER_HOME
+        
+        useradd -rm -s /bin/bash -G $USER,$([[ $(getent group sudo) ]] && echo sudo || echo wheel) -g $USER -u $UHID $USER -d $USER_HOME
+        echo $USER groups: $(groups $USER)
+        chpasswd <<< "${USER}:${USER_PW}"
+
+# SUDOERS Setup 
+        cat <<SUDO >> /etc/sudoers.d/01-sudo-wheel
+Defaults lecture = never     
+%wheel ALL=(ALL:ALL) ALL
+%sudo  ALL=(ALL:ALL) ALL
+SUDO
+    chmod 440 /etc/sudoers.d/01-sudo-wheel
+
+        cat <<USER >> /etc/sudoers.d/02-$USER
+$USER ALL = NOPASSWD:/bin/chown
+$USER ALL = NOPASSWD:/bin/chmod
+USER
+        chmod 440 /etc/sudoers.d/02-$USER
+        if [[ ${USER_NOPASSWORD_PERMITS} ]]; then
+            echo "Appending additional no password command permits requested for user $USER"
+            echo $USER_NOPASSWORD_PERMITS
+            for cmd in $USER_NOPASSWORD_PERMITS; do
+             echo adding no password for command $cmd 
+             echo $USER ALL = NOPASSWD:$cmd >> /etc/sudoers.d/02-$USER
+            done
+        fi 
+    else
+        # if no password then create non login non wheel user
+        echo $USER will be a non login user
+        if [[ $USER_HOME ]]; then
+        echo creating and setting a non-login user home
+        mkdir -p $USER_HOME
+        chown $USER:$USER $USER_HOME
+        fi
+        useradd -rM -s /sbin/nologin -G $USER -g $USER -u $UHID $USER -p '*' -d ${USER_HOME:-/dev/null}
+fi   
+ # shellcheck enable=add-default-case      
+# chmod -R g+rw /opt
+# setfacl -d --set u::rwx,g::rwx,o::- /opt
+echo $USER added with $(id $USER)
+cat /etc/passwd | grep $USER
+echo "done------- Adding USER: $USER ------"
+
+fi
+
+
+
+

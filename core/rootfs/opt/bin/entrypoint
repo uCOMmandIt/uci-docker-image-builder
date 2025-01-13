@@ -1,0 +1,53 @@
+#!/bin/bash
+# https://stackoverflow.com/a/43267603/4695378
+# env > /tmp/passed.env
+cat /proc/self/environ > /tmp/passed.env
+source /opt/core_run.env
+
+cmd=$1
+case "$cmd" in
+
+maphostid)
+shift 1
+/bin/bash -l -c '$LIB_DIR/user-set-host-id $@' $0 "$@"
+;;
+idle)
+echo container put in idle mode, use docker terminal to access
+sleep infinity
+;;
+image)
+shift 1
+/bin/bash -l -c '$LIB_DIR/image-info $@' $0 "$@"
+;;
+shell)
+shift 1
+_shell_=/bin/bash
+[[ $1 ]] && _shell_="/bin/su $1"
+$_shell_ -c "cd ${DEFAULT_DIR:-/}; exec bash -l"
+;;
+help)
+$BIN_DIR/entrypoint-help
+;;
+script)
+shift 1
+cat | /bin/bash -l
+;;
+${ENTRYPOINT_CMD:-start})
+shift 1
+exec /bin/bash -l -c '${ENTRYPOINT_CMD_PATH:-$BIN_DIR/${ENTRYPOINT_CMD:-start}} $@' $0 "$@"
+;;
+*)
+echo "--- command passed to container: $* ---"
+echo -e "output:\n"
+if [ -n "$*" ]; then
+    if ! /bin/bash -l -c '$@' $0 "$@" ; then
+    $BIN_DIR/entrypoint-help
+    fi
+echo -e "\n------------------------------\n"    
+ else
+    echo "!!!! no command was passed to entrypoint !!!! "
+    echo 
+    $BIN_DIR/entrypoint-help
+fi
+;;
+esac

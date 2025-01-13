@@ -1,0 +1,4 @@
+#!/bin/bash
+# /opt/python/apps/bin/lastversion --assets --output /shell/base/modules/scripting/btpl.lib download bash-tpl
+wget -O bash-tpl https://raw.githubusercontent.com/TekWizely/bash-tpl/main/bash-tpl
+# sed -i 's/\bmain\b/btpl/g' /shell/base/modules/scripting/btpl.lib

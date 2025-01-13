@@ -1,0 +1,394 @@
+#!/bin/bash
+
+isunset() { stmp=$(mktemp -u XXXXXXXXXXXXXX); [[ "${!1-$stmp}" == "$stmp" ]] || return 1;  }
+isset()   { if isunset "$1"; then return 1; fi }
+
+quiet () {
+ if [[ $VERBOSE ]]; then $@; fi  
+}
+
+get_arch () {
+	local arch="$(uname -m)" 
+	case "$arch" in 
+		x86_64)  arch='amd64' ;; 
+		armhf)   arch='armv6' ;; 
+		armv7)   arch='armv7' ;; 
+		aarch64) arch='arm64' ;; 
+		ppc64el|ppc64le) arch='ppc64le' ;; 
+		s390x)   arch='s390x';; 
+		*) return 1 ;;\
+	esac; 
+    echo $arch
+}
+
+isAbsPath() {
+    if [[ "${1:0:1}" == / || "${1:0:2}" == ~[/a-z] ]]
+    then
+        echo "true"
+        return 0
+    else
+        return 1
+    fi
+}
+
+sed_ignore_comments () {
+    cmd="sed -r 'h;s/[^#]*//1;x;s/#.*//;${1};G;s/(.*)\n/\1/'"
+    if (( $# == 2 )) ; then
+        eval $cmd <<< "$2"
+    else
+        eval $cmd < /dev/stdin
+    fi
+}
+
+clean_env_file () {
+  local compact; local lines
+  # -c will also remove comments and all empty lines
+  [[ $1 == "-c" ]] && compact=true && shift 1
+  # 
+  #  remove trailing spaces | remove double quotes 
+  # | remove blanks after equals and quote value | remove any spaces before afer =
+  # remove blank lines | remove comment lines if requested
+  [[ -f $1 ]] && lines=$(<$1) || lines="$1"
+  echo "$lines" | sed_ignore_comments s/\\s*$//g  | sed_ignore_comments s/\"//g \
+  | sed_ignore_comments s/\(=[[:blank:]]*\)\(.*\)/\\1\"\\2\"/  \
+  | sed_ignore_comments s/\\s*=\\s*/=/g \
+  | sed -rz 's/^\n+//; s/\n+$/\n/g' | if [[ $compact ]]; then grep -v '^#' | grep -v "^$" ; else cat; fi 
+}
+
+env_file () {
+   local efile
+   efile=$(echo -- "$@" | grep -oP -- '(?<=-e )[^ ]*')
+   if [[ ! $efile ]]; then  
+    [[ ! "$1" == *-* ]] && efile=${1:-.env}
+   fi 
+   [[ -f "$(realpath "${efile}.env" 2> /dev/null)" ]] && { echo "${efile}.env"; return 0; } # || echo not ${efile}.env
+   [[ -f "$(realpath "${efile}/.env" 2> /dev/null)" ]] && { echo "${efile}/.env"; return 0; } # || echo not ${efile}/.env
+   [[ "${efile##*.}" == "env" ]] && [[ -f "$(realpath "${efile}" 2> /dev/null)" ]] && { echo $efile; return 0; } # || echo not $env
+   return 1
+}  
+
+read_env_file() {
+  local evar
+  while read line; do
+  evar=$(echo $line | cut -d '=' -f1)
+  if [[ $(echo $(c() { echo $#; }; c $line)) -gt 1 ]];then
+    echo the environment file: $1 
+    echo has a format error on this line
+    echo "--------------"
+    echo $line
+    echo "--------------"
+    echo you must correct this before the build can continue
+    return 1
+  fi  
+  if [[ ! ${!evar}  ]]; then
+        # echo DECLARE $evar via $line 
+        if declare -gx "$(echo "${line}" | sed 's/\"//g' )"; then
+        quiet echo loaded: ${evar}=${!evar} 
+        else
+            quiet echo error setting $evar
+            return 1
+            
+        fi
+    else 
+    quiet echo $evar already set to ${!evar}    
+  fi
+  done < <(clean_env_file -c $1) 
+}
+
+source_env_file () {
+    local default;local efile
+    if efile=$(env_file "${@:-$UCI_BUILD_ENV_FILE}"); then 
+      [[ $efile == ".env" ]] && default=true
+      [[ ! $(isAbsPath $efile) ]] && efile=$(realpath $efile)
+      quiet echo -e "\e[1;37m********************\e[0;37m"
+      quiet echo loading build environment with environment file
+      quiet echo $efile
+      quiet echo ----------------
+      quiet cat $efile
+      quiet echo ----------------
+      if read_env_file "$efile"; then 
+        [[ $default ]] && quiet echo -e "\e[1;31mNOTE: sourced default .env file in present directory\e[0;37m"
+        quiet echo -e "\e[1;37m********************\e[0;37m"
+        UCI_BUILD_ENV_FILE=$efile
+        else
+        quiet echo error occured while loading environment file 
+        quiet echo $efile
+        quiet echo exiting
+        quiet echo -e "\e[1;37m********************\e[0;37m"
+        return 2
+      fi
+     else
+        if [[ $efile ]]; then
+            quiet echo unable to find an environment file with passed ${1}
+         else 
+            quiet echo unable to find default environment file .env 
+            quiet echo using the current environment plus default build options
+        fi
+        return 2
+    fi
+
+}
+
+load_csv () {
+    # add newline, remove comments, remove empty lines, remove leading whitepace, remove extra whitespace around ,
+  if [[ -f $1 ]]; then  
+    sed -e '$a\' "$1" | \
+    sed -e '/\s*#.*$/d' |  \
+    sed -e '/^\s*$/d' | \
+    sed 's/^\s*//g' | \
+    sed 's/\s*,\s*/,/g'
+   else 
+    return 1
+  fi
+}
+
+get_image_name_from_distro () {
+  local distro; local imagename
+  distro=${1:-$LINUX_DISTRO}
+  if [[ $distro ]]; then
+    imagename=$(echo "$(load_csv $BDIR/distros.csv)" | grep "^${distro}," | cut -f2 -d,  | sed "s/\s/|/g")
+    [[ $imagename ]] && echo $imagename || return 1 
+    else
+    return 2
+  fi
+}
+
+get_distro_from_image () {
+
+  local temp=/tmp/os-release.tmp
+  local distro 
+  local keep
+  local image
+  local error
+  [[ $1 == "-k" ]] && keep=true && shift;
+  image=${1:-$BASE_IMAGE}
+  [[ ! $image ]] && echo no image name passed or in BASE_IMAGE, can not determine distro && return  1
+  if ! docker images -q $image &> /dev/null; then echo no local copy of $image, please wait while it is pulled; fi
+  echo determining distro from image: $image by creating dummy container
+  if docker create --name dummy $image 1> /dev/null 2>&1; then
+    if docker cp -L dummy:${2:-/etc/os-release} $temp 1> /dev/null 2>&1; then
+      distro=$(cat $temp | grep "ID_LIKE=" | cut -f2 -d=) 
+      if [[ ! "$distro" ]]; then distro=$(cat $temp | grep "^ID=" | cut -f2 -d=); fi
+      if [[ $distro ]]; then
+        echo distro was determined to be $distro
+        if isset LINUX_DISTRO; then
+          echo setting LINUX_DISTRO to $distro
+          LINUX_DISTRO="${distro}"
+          else
+          echo "WARNING: environment variable LINUX_DISTRO is not availble so can not set it"
+          error=4
+        fi  
+      else
+        echo unable to determine distro from image $image
+        error=3
+      fi 
+     else
+        echo unable to create extract extract os-release from dummy container, can not determine distro
+        error=2
+    fi
+   else
+    echo unable to create dummy container, can not determine distro
+    echo image: $image may not exist
+    error=1
+  fi  
+  echo removing dummy container
+  docker rm -f dummy &> /dev/null
+  [[ ! $keep || $error ]] && docker image rm $image &>/dev/null
+  return ${error:-0}
+
+}
+
+valid_distro() {
+  # do this better in terms of BASE_IMAGE vs DISTRO
+# only valid distros are ones in distros.csv  
+local distro; local set_distro; 
+distro=${1:-$LINUX_DISTRO} 
+if [[ $distro ]]; then 
+  distros=$(echo $(echo "$(load_csv $BDIR/distros.csv)" | grep -Eo "^[^,]+") | sed "s/\s/|/g" | tr '[:upper:]' '[:lower:]')
+  if [[ "$distros" == *"${distro}"* ]]; then
+    return 0
+  else
+    echo "distro $distro is not a valid uci-docker-build distro"
+    echo valid distros are: $distros
+    return 1
+  fi 
+else
+ echo no distro to validate
+ return 2
+fi 
+
+}
+
+make_image_name () {
+
+ local arch
+ local name 
+ local ruser
+ local tag
+
+  # echo making image name arguments: $@
+  # echo imagename: $IMAGE_NAME
+  # echo imagename prefix: $IMAGE_NAME_PREFIX
+  # echo imagename suffix: $IMAGE_NAME_SUFFIX
+
+  # echo APPEND: $APPEND_DISTRO
+  # echo user: $RUSER
+  # echo distro $LINUX_DISTRO
+
+  name=${1:-$IMAGE_NAME}
+  ruser=${2:-$RUSER}
+  tag=$(echo $BASE_IMAGE | cut -d ":" -s -f2)
+  
+  if ! [[ $name ]]; then 
+    name=$(echo $BASE_IMAGE | cut -d ":" -f1)
+  fi
+
+  # [[ $ruser ]] && name=${ruser}/${name}
+  
+  # [[ $TARGET == "arm64" && ! $TARGET == $(get_arch) ]] && arch=-$TARGET
+  # [[ $TARGET == "amd64" && ! $TARGET == $(get_arch) ]] && arch=-$TARGET
+  # name=${name}$arch
+
+  [[ $IMAGE_NAME_PREFIX ]] && name=${IMAGE_NAME_PREFIX}-$name 
+  [[ $IMAGE_NAME_SUFFIX ]] &&   name=$name-${IMAGE_NAME_SUFFIX} 
+  [[ $APPEND_DISTRO ]] && name=$name-${LINUX_DISTRO}
+  [[ $APPEND_TAG && $tag ]] && name=$name-$tag
+
+  if [[ "$name" == $(echo $BASE_IMAGE | cut -d ":" -f1) ]]; then
+    [[ $tag ]] && name=$name-$tag || name=$(basename $PWD)-$name 
+  fi  
+   
+  echo $name
+  
+}
+
+get_build_src () {
+  # processing the build source directory
+local src; local spath; local spaths
+
+# will determine if there are any minimal build source files/directories
+check_dir () {
+ if   
+  [[ "$(ls $1/packages/*system.pkgs 2> /dev/null)" ]] || \
+  [[ "$(ls $1/packages/system/*.pkgs 2> /dev/null)" ]] || \
+  [[ -f $1/packages/repositories.sh ]] || \
+  [[ -f $1/packages/packages.sh ]]; 
+  then 
+  _packages_=true
+  return 0
+ fi
+ [[ -f $1/init/init.sh ]] && return 0
+ [[ -d $1/rootfs ]] && return 0
+ return 1
+}
+
+src=${1:-$BUILD_SRC}
+[[ $src == "_core_" ]] && return 0
+src=${src:-src}
+unset BUILD_SRC
+
+if check_dir $src; then 
+    BUILD_SRC=$(realpath $src)
+    echo $BUILD_SRC
+    return 0
+fi
+
+quiet echo build source path \'$src\' not initially found, echo looking 
+quiet echo in \$PWD,\$PWD/src/,../\$PWD/src for valid build source 
+quiet echo to avoid this search use BUILD_SRC=  in an environment file 
+spaths="$PWD $PWD/src $(dirname $PWD)/$src $(dirname $PWD)"
+for spath in $spaths; do
+    quiet echo checking for source in: $spath
+    if check_dir $spath; then
+      quiet echo found valid source directory!
+      BUILD_SRC=$spath
+      echo $BUILD_SRC
+      return 0
+    fi
+done
+
+quiet echo -e "\e[1;31mERROR: unable to find a build source directory as $src \e[1;37m" 
+ return 1
+}
+
+build_info () {
+
+if [[ $VERBOSE ]]; then
+  echo -e "\n!!!!!!!!!!!!!!!!EXTRA BUILD INFO !!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  pushd "$BDIR" > /dev/null || return 3
+  docker buildx bake --print $TARGET
+  popd > /dev/null || return 4
+  if [[ $BUILD_SRC  == "_core_" ]]; then
+    echo building only core
+    cat $BDIR/core/core.sh 
+    ls -la $BDIR/core
+  else
+    echo -e "\n---------------------------------" 
+    echo "build source at $BUILD_SRC to be mounted to /build in container ***** "
+    ls -la $BUILD_SRC
+    echo -e "\n----- base init script  init.sh ------\n"
+    cat $BUILD_SRC/init/init.sh
+    echo -e "\n----- end base init script  init.sh ------"
+    echo -e "\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  fi
+fi
+
+echo -e "\e[1;37m**************BUILD PARAMETERS *******************************"
+echo "Architecture of this machine doing the building: $ARCH"
+if [[ "$BUILD_SRC" == "_core_" ]] ;then
+   echo Building  ONLY the UCI core
+ else 
+ echo "Using scripts source directory at $BUILD_SRC"
+fi 
+echo "Building with base image: $BASE_IMAGE"$([[ "${BASE_IMAGE}" == *":"* ]] || echo :latest) 
+echo "Build logs can be found in directory $log_dir"
+echo "Linux Distro of Image: $LINUX_DISTRO"
+echo "Using build target: ${TARGET}"
+if [[ -f $BUILD_ENV_FILE ]]; then
+  echo -e "Will append contents of $(realpath $BUILD_ENV_FILE)\nto build envionrment"
+  [[ $VERBOSE ]] && echo -e "-------\n $(cat $BUILD_ENV_FILE) \n-------"
+fi  
+echo -e "\n----- output --------"
+echo -e "creating image(s) for TARGET \e[1;31m$TARGET\e[1;37m"
+case $TARGET in
+  multi)
+  echo -e "\e[1;31m$IMAGE_NAME$([[ ! $ARCH == amd64 ]] && echo -amd64):${TAG:-latest}\n$IMAGE_NAME$([[ ! $ARCH == arm64 ]] && echo -arm64):${TAG:-latest}\e[1;37m"
+  echo "This build machine has architecture $ARCH thus image without architecture suffix will be architecture $ARCH"
+  echo "will be be built and appear locally" 
+  if [[ $REPO && $publish ]]; then 
+    echo After the build these images will be pushed/published to
+    echo -e "\e[1;31m$REPO/$RUSER\e[1;37m"
+    echo images will remain locally and be used and pushed without rebuilding
+
+    echo "NOTE: use target 'publish' without a setting REPO to build and push both images"
+    echo "to docker hub without architecture suffix or local copy"
+  fi
+  ;;
+  dev)
+  ;&
+  default) 
+  echo -e "\e[1;31m$IMAGE_NAME:${TAG:-latest}\e[1;37m"
+  echo "Will build this single image on this machine with architecture $ARCH" 
+  ;;
+  arm64) 
+  echo -e "\e[1;31m$IMAGE_NAME$([[ ! $ARCH == arm64 ]] && echo -arm64):${TAG:-latest}\e[1;37m"
+  echo "Will build this single arm64 image on this machine" 
+  ;;
+  amd64) 
+  echo -e "\e[1;31m$IMAGE_NAME$([[ ! $ARCH == amd64 ]] && echo -amd64):${TAG:-latest}\e[1;37m"
+  echo "Will build this single amd64 image on this machine" 
+  ;;
+  publish)
+  echo -e "\e[1;31m$IMAGE_NAME:${TAG:-latest}\e[1;37m"
+  echo "Will build and push both amd64 and arm64 architecture images to" 
+  echo -e "\e[1;31mhub.docker.com\e[1;37m with this single name under account: \e[1;31m$RUSER\e[1;37m"
+  echo "and no local copy will remain"
+  echo "NOTE: use target 'publish' setting REPO to build and push both images elsewhere"
+  ;;
+esac
+echo any existing image will be $([[ $OVERWRITE == true ]] || echo NOT) overwritten
+[[ $OVERWRITE == true ]] || echo the existing image will renamed with a timestamp before the build begins  
+echo "------------------"
+echo -e "********************\e[0;37m"
+
+}

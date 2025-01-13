@@ -1,0 +1,2 @@
+echo "this is my custom entrypoint command script, mycmd"
+echo "arguments that were passed: $*"

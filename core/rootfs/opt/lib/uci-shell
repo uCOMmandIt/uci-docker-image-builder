@@ -1,0 +1,31 @@
+#!/bin/bash
+echo -e "\n------------ ADD UCI-SHELL ---------------"
+/bin/cp -R -f -p shell/. /shell
+ls -la /
+ls -ls /shell
+# mkdir -p /shell
+# _url=https://git.kebler.net/bash/shell-base.git
+# git clone $_url /shell
+
+source /shell/base/install/install.sh 
+usermod --shell /bin/bash root
+
+if [[ $USER_PW ]]; then
+echo adding shell for login user $USER
+homedir=$( getent passwd "$USER" | cut -d: -f6 )
+mkdir -p $homedir/shell 
+uci_bash_shell_install $USER
+chown -R :$USER /shell 
+chmod -R g+r /shell
+# setfacl -d --set u::rwx,g::rwx,o::- /shell
+chown -R :host $homedir/shell 
+chmod -R g+rw $homedir/shell
+# setfacl -d --set u::rwx,g::rwx,o::- /home/$USER/shell
+else 
+ uci_bash_shell_install 
+fi
+
+mkdir /root/shell
+
+echo "----------- uci shell install complete ------"
+

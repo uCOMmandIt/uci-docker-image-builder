@@ -1,0 +1,9 @@
+bash
+bash-completion
+coreutils
+wget 
+curl 
+git 
+nano
+sudo
+ 

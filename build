@@ -1,0 +1,426 @@
+#!/bin/bash
+
+udbuild () {
+
+local targets=(dev arm64 amd64 publish multi default)
+local log_dir; local no_prompt; local packages; local befile; local publish
+declare -A dimage; declare -A dinstall; declare -A dupdate
+
+declare OPTION; declare OPTARG; declare OPTIND
+
+BDIR=$(dirname "$(realpath "$BASH_SOURCE")")
+export BDIR
+# load script library
+source $BDIR/lib/load.sh
+UCI_BUILD_ENV_FILE=""
+
+# check for subcommands first
+case "$1" in
+  try)
+  shift 1;  try_container "$@"; return $?  ;;
+  
+  env_file) 
+    shift 1
+    befile=$(echo -- "$@" | grep -oP -- '(?<=-e )[^ ]*')
+    env_file ${befile:-$UCI_BUILD_ENV_FILE} ;  
+    return $?  
+  ;;
+
+  func) 
+   shift
+    local list
+    [[ $1 == "-s" ]] && echo source $BDIR/lib/build.lib && return
+    [[ $1 == "-l" ]] && list=true && shift
+    if [[ $1 ]]; then
+      if [[ $list ]]; then
+          env -i bash --noprofile --norc -c "source $BDIR/lib/build.lib;  declare -f $1"
+       else 
+        source $BDIR/lib/build.lib
+          func=$1; shift
+          $func "$@" 
+          return $?
+      fi 
+     else
+        env -i bash --noprofile --norc -c "source $BDIR/lib/build.lib;  declare -F | cut -d' ' -f3"
+    fi
+   return 0
+   ;;
+
+  build_src) 
+    shift 1
+    befile=$(echo -- "$@" | grep -oP -- '(?<=-e )[^ ]*')
+    befile=${befile:-$UCI_BUILD_ENV_FILE} 
+    if befile=$(env_file $befile); then  
+      [[ $befile ]] && source_env_file $befile
+      get_build_src
+      return $?
+     else
+      return 3
+    fi
+  ;;
+  help)
+  ;&
+  --help)
+  ;&
+  -help) shift 1; usage "$@"; return $? ;;
+  source)
+    shift
+    local list
+    [[ $1 == "-d" ]] && echo $BDIR && return
+    if [[ $1 ]]; then
+       type udbuild | grep --color -n -a${2:-3} -a${2:-3} "$1"
+     else 
+     type udbuild
+    fi 
+    return 0
+    ;;
+  image)
+  shift 1
+    case "$1" in
+      name) shift 1; image_name "$@" ;;
+      tag) shift 1; image_tag "$@" ;;
+      push) shift 1; image_push "$@" ;;
+      delete) shift 1; image_delete "$@" ;;
+      exists) shift 1; image_exists "$@" ;;
+      info) 
+        shift 1
+        case "$1" in
+          arch) shift 1; image_arch "$@" ;;
+          tags) shift 1; image_tags "$@" ;;
+          id) shift 1; image_id "$@" ;;
+          * ) image_info "$@"
+        esac
+      ;;  
+      *) echo no image subcommand $1 ;;   
+    esac
+    return $?
+  ;;
+esac
+
+[[ -z "$PS1" ]] || no_prompt=true
+# alway OVERWRITE unless requested not to
+OVERWRITE=${OVERWRITE:-true}
+
+while getopts 'ya:b:c:d:e:f:g:hi:lnopr:s:t:u:vx:z:' OPTION; do
+  # echo processing: option:$OPTION argument:$OPTARG index:$OPTIND remaining:${@:$OPTIND}
+  case "$OPTION" in
+  a)
+    BUILD_ENV_FILE=$OPTARG
+  ;;
+  b)
+  # CUSTOM BASE IMAGE
+    BASE_IMAGE=$OPTARG
+    ;;
+  y)
+  # CUSTOM BASE IMAGE
+    BASE_IMAGE_COPY=true
+    ;;
+  x)
+    IMAGE_NAME_PREFIX=$OPTARG  
+    ;;
+  z)
+    IMAGE_NAME_SUFFIX=$OPTARG  
+    ;;    
+  c)
+    TRY_CMD=$OPTARG
+      ;;
+  d)
+    # LINUX_DISTRO=$OPTARG
+    LINUX_DISTRO=$OPTARG
+    ;;
+  e) 
+   UCI_BUILD_ENV_FILE=$OPTARG
+   ;; 
+  f)
+    REBUILD=$OPTARG
+  ;;
+  g)
+    TAG=$OPTARG
+    ;;
+  h)  
+    usage
+    return 0
+  ;;
+  i) 
+   IMAGE_INFO=$OPTARG
+   ;; 
+ 
+  o)
+    OVERWRITE=false
+  ;;
+  v)
+    VERBOSE=true
+  ;;
+  l)
+  #  append distro name to image name
+    APPEND_DISTRO=true
+    ;;
+  n) 
+    nocache="--no-cache" 
+  ;;    
+  p)
+    echo "build script will be run WITHOUT user prompts (i.e. non-interactive)"
+    no_prompt=true
+  ;;
+  r)  
+    REPO=$OPTARG
+  ;;  
+  s)
+    # building source from which to bind into build, default is src/ in current directory
+    BUILD_SRC=$OPTARG
+    ;;    
+  t)
+    TARGET=$OPTARG
+    ;;
+  u)
+    RUSER=$OPTARG
+    ;;
+  *)  
+      echo "unknown $0 option -$OPTARG"
+      usage
+      return 1
+  ;;
+  esac
+done
+
+shift $((OPTIND - 1))
+
+
+if [[ $UCI_BUILD_ENV_FILE ]]; then 
+  if ! source_env_file $UCI_BUILD_ENV_FILE; then
+   unable to source $UCI_BUILD_ENV_FILE
+   aborting build
+   return 2
+  fi
+else  
+  source_env_file
+fi
+
+if [[ $TARGET ]]; then 
+  if [[ -f $TARGET.env ]]; then 
+  echo reading additional environment, $TARGET.env
+  read_env_file $TARGET.env
+  fi
+fi
+
+# this deals with private repo publishing
+if [[ $TARGET == "publish" ]]; then
+  if [[ $REPO ]]; then
+    # publishing to other than hub.docker.com
+    TARGET="multi"
+    publish=true
+    if [[ -f $REPO.env ]]; then
+      publish=$REPO
+      echo reading additional publish repo environment, $REPO.env
+      read_env_file  $REPO.env
+    fi
+   else
+    # publishing to hub.docker.com
+    if [[ ! $RUSER ]]; then
+     echo "must specify repository user (RUSER) when publishing to hub.docker.com"
+     echo aborting build and publish
+     return 1
+    fi 
+    publish=hub.docker.com
+  fi
+fi    
+
+LINUX_DISTRO=${LINUX_DISTRO:-""}
+if [[ $BASE_IMAGE ]]; then
+  if ! [[ $LINUX_DISTRO ]]; then
+    if ! get_distro_from_image -k $BASE_IMAGE; then 
+      echo FATAL: aborting build
+      docker image rm $BASE_IMAGE
+      return 2
+    fi  
+    echo add this to your environment file and you can avoid the image distro check
+    echo LINUX_DISTRO=$LINUX_DISTRO
+    # if both are given will assume user supplied correct distro to image
+  fi  
+ else
+ if [[ $LINUX_DISTRO ]]; then
+  if ! BASE_IMAGE=$(get_image_name_from_distro); then
+    echo FATAL: unable to set base image from distro: $LINUX_DISTRO, aborting build
+    return 2
+  fi
+ else
+   echo neither base image nor distro is set using default alpine image
+   BASE_IMAGE=alpine
+   LINUX_DISTRO=alpine
+  fi 
+ 
+fi
+  
+if ! valid_distro; then
+   echo "FATAL: the distro ($LINUX_DISTRO) of the BASE_IMAGE ($BASE_IMAGE) not valid, aborting build"
+ return 2
+fi 
+
+# echo image: $BASE_IMAGE
+# echo distro: $LINUX_DISTRO
+
+if ! get_build_src > /dev/null ; then 
+ if [[ $no_prompt ]] ; then
+    echo aborting the build...
+    echo -e "\e[1;31mNOTE: use '_core_' to explicitly build with only the UCI core repo\e[1;37m"
+    return 2
+    else 
+    echo "Do you want to build with only the UCI core" 
+    read  -n 1 -p "instead? [y]=>" REPLY
+    [[ $REPLY != "y" ]] && echo -e "\n" && return 2
+    BUILD_SRC="_core_"
+    echo -e "\n\e[1;31mNOTE: use '_core_' to explicitly build with only the UCI core\e[1;37m"
+  fi
+fi
+
+TARGET=${TARGET:-default}
+[[ ! "${targets[@]}" =~ $TARGET ]] && echo $TARGET is not a valid target && echo valid targets are: ${targets[@]} && return 4
+
+IMAGE_NAME=$(make_image_name $@)
+
+# TODO writing to existing tag untags existing image so write a new tag to that image then continue
+# retag existing image and remove former tag
+if [[ $(image_exists $IMAGE_NAME) ]]; then
+  if [[ $OVERWRITE == true ]]; then
+    image_delete $IMAGE_NAME 
+  else 
+    newtag=$(date +'%d%H%M%S')
+    echo image exists retaging $(image_name $IMAGE_NAME) with tag :$newtag  
+    image_tag $IMAGE_NAME $IMAGE_NAME:$newtag
+    image_tag -r $IMAGE_NAME
+  fi 
+fi  
+
+ARCH=$(get_arch)
+log_dir=$PWD/logs
+mkdir -p $log_dir 
+[[ $TARGET == "dev" ]] && VERBOSE=true
+
+export BASE_IMAGE
+export TAG
+export IMAGE_NAME
+export LINUX_DISTRO
+export BUILD_SRC
+export ARCH
+export VERBOSE
+export REBUILD
+
+if [[ $VERBOSE ]]; then
+echo BASE_IMAGE=$BASE_IMAGE
+echo TAG=$TAG
+echo IMAGE_NAME=$IMAGE_NAME
+echo LINUX_DISTRO=$LINUX_DISTRO
+echo BUILD_SRC=$BUILD_SRC
+echo ARCH=$ARCH
+echo VERBOSE=$VERBOSE
+echo REBUILD=$REBUILD
+fi 
+
+BUILD_ENV_FILE=${BUILD_ENV_FILE:-$([[ -f build.env ]] && echo build.env)}
+
+build_info
+
+if [[ ! $no_prompt ]]; then
+  read  -n 1 -p "do you want to continue [y]=>" REPLY
+  [[ $REPLY != "y" ]] && echo -e "\n" && return 4
+  echo -e "********** starting build ****************\n"
+fi
+
+builder=default
+if [[ $TARGET == "publish" ]]; then
+    IMAGE_NAME=${RUSER}/${IMAGE_NAME} 
+    builder=publish 
+    pushd "$BDIR" > /dev/null || return 3
+    if ! docker buildx ls | grep -q publish ; then
+        echo publish builder does not exist, creating with docker-container driver 
+        docker buildx create --name publish --driver docker-container >/dev/null
+        docker buildx ls | grep publish
+    fi
+    popd > /dev/null || return 4
+fi
+
+# make a copy of build source locally in build directory
+if [[ ! $BUILD_SRC = "_core_" ]]; then
+  # copy  or bind build source directory to temporary .src/ subdirectory in build repo
+  [[ -d $BDIR/.src ]] && rm -rf $BDIR/.src
+  if [[ $(which rsync 2> /dev/null ) ]]; then
+  rsync -aAru ${BUILD_SRC:-src}/ $BDIR/.src
+  else
+  echo no rsync copying with cp
+  /bin/cp -a ${BUILD_SRC:-src}/. $BDIR/.src > /dev/null 2>&1
+  fi
+  # ls -la $BDIR/.src/rootfs
+fi  
+
+# create Dockerfile from template
+if ! source $BDIR/Dockerfile.d/create; then 
+echo unable to create Dockerfile from template, aborting build
+return 3
+fi
+
+if [[ -f $BUILD_ENV_FILE ]]; then 
+  echo -e "including custom build environment at \n $(realpath $BUILD_ENV_FILE)"
+  [[ $VERBOSE ]] && cat $BUILD_ENV_FILE && echo -e "\n--------------------"
+  if [[ ! $BUILD_SRC = "_core_" ]]; then
+    echo -- adding/appending to init build environment at init/build.env
+    echo | tee -a "$BDIR/.src/init/build.env" > /dev/null
+    tee -a "$BDIR/.src/init/build.env" > /dev/null < "$BUILD_ENV_FILE"
+  fi  
+    echo -- adding to core build environment as build.env
+    cat "$BUILD_ENV_FILE" > "$BDIR/core/build.env"
+    echo "------------------"
+fi    
+
+
+if [[ -d $BDIR/.src/core ]]; then
+  # remove any old custome directory from previous builds
+  [[ -d "$BDIR/core/custom" ]] && rm -rf "$BDIR/core/custom"
+  echo adding the custom core directory to /custom in the core directory
+  /bin/cp -a "$BDIR/.src/core/." "$BDIR/core/custom"
+  rm -rf "$BDIR/.src/core/"
+  ls -la $BDIR/core/custom
+fi  
+
+pushd "$BDIR" > /dev/null || return 3
+
+export BUILDING=true
+
+echo running build command: docker buildx --builder ${builder} bake ${nocache} ${TARGET} 
+echo -e "#################################################################\e[1;37m"
+docker buildx --builder ${builder} bake ${nocache} ${TARGET}  2>&1 | tee "$log_dir/${IMAGE_NAME//\//-}build.log"
+[[ $? == 0 ]] && echo succcess building image $IMAGE_NAME || exit_abnormal 5  
+popd > /dev/null || return 4
+
+# cleanup
+echo cleaning up..
+rm -rf $BDIR/.src $BDIR/core/build.env $BDIR/core/custom-core.sh $BDIR/core/*-permits > /dev/null 2<&1
+echo done cleaning
+# try in container
+if [[ ($TRY_CMD || $TARGET == "dev") ]]; then
+ echo trying newly built image in a container
+ echo name before try $IMAGE_NAME
+ try_container build -m opt $([[ $TARGET == "publish" ]] && echo -p) ${TRY_CMD:-shell}
+fi 
+
+if [[ $REPO && $publish ]]; then 
+    echo now publishing arm64 and amd64 images $IMAGE_NAME to $REPO
+    if [[ $ARCH == amd64 ]]; then
+        image_push  -i "$IMAGE_NAME"
+        image_push  -i "$IMAGE_NAME-arm64"
+      else 
+        # arm64 machine
+        image_push  -i -r "$IMAGE_NAME-arm64" "$IMAGE_NAME"
+        image_push  -i -r "$IMAGE_NAME" "$IMAGE_NAME-amd64"
+    fi
+fi
+
+# cleanup
+[[ -d "$BDIR/core/custom" ]] && rm -rf "$BDIR/core/custom"
+
+}  
+
+# if script was executed then call the function
+(return 0 2>/dev/null) || udbuild "$@"
+
+
+

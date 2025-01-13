@@ -1,0 +1,5 @@
+If you create/edit a image.info file in your source
+at the init/opt subfolder then it will be including in the build 
+as /opt/image.info.  
+So this text comes from the default image.info file 
+in the src/init folder of the default build source

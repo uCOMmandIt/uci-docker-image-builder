@@ -1,0 +1,35 @@
+#!/bin/sh
+load_csv () (
+# add newline, remove comments, remove empty lines, remove extra whitespace around ,
+csv=${1:-/opt/lib/distros.csv}
+  if [ -f $csv  ]; then  
+    sed -e '$a\' "$csv" | \
+    sed -e '/\s*#.*$/d' |  \
+    sed -e '/^\s*$/d' | \
+    sed 's/\s*,\s*/,/g'
+   else 
+    return 1
+  fi
+)
+
+valid_distro () (
+release=${1:-/etc/os-release}
+distros=$(echo $(echo "$(load_csv)" | grep -Eo "^[^,]+") | sed "s/\s/|/g")
+#echo valids:$distros
+distro=$(cat $release | tr [:upper:] [:lower:] | grep -Eio -m 1 $distros)
+# echo debug: c $distro p $LINUX_DISTRO
+if [ "$LINUX_DISTRO" = "$distro" ]; then
+echo $distro
+else
+return 1
+fi
+)
+
+set_distro () {
+
+_distro="$(echo "$(load_csv)" | grep $LINUX_DISTRO)"
+INSTALL_PKGS=$(echo $_distro | cut -d',' -f3)
+UPDATE_PKGS=$(echo $_distro | cut -d',' -f4)
+export INSTALL_PKGS
+export UPDATE_PKGS
+}

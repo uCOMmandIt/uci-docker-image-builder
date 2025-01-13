@@ -1,0 +1,74 @@
+#!/bin/bash
+
+install () {
+
+    builder=$(dirname "$(realpath "$BASH_SOURCE")")
+    target=$1
+    if [[ "$1" == "remove" ]]; then 
+        _remove=true
+        shift 
+        else 
+        unset _remove 
+    fi 
+    [[ "$1" == "-d" ]] && dir="$2" && shift 2 
+    target=${dir:-/usr/bin}/${1:-udib}
+    cmd=$(basename $target)
+    dir=$(dirname $target)
+
+    if [[ $_remove ]]; then
+    if [[ -f $target ]]; then
+        echo link to builder found at "$target. Do you want to REMOVE IT? (y/n) "
+        read -e ans
+        [[ ! $ans == "y" ]] && return 1
+        usesudo=""
+        [[ $(stat -c "%U" $target) == "root" ]] && usesudo=sudo && echo owned by root, sudo required
+        $usesudo /bin/rm $target 
+        return 0
+    else 
+        echo link to builder not found at $target, nothing to remove 
+    fi 
+    return   
+    fi
+
+    # echo "$PATH --- $dir"
+    declare -a a="(${PATH//:/ })"
+    for i in ${a[*]}; do [[ "$i" == "$dir" ]] && found=true; done
+    if [[ $found ]]; then 
+        echo creating a link \'$cmd\' in \'$dir\' to \'$builder\' 
+        if [[ -f $target ]]; then
+            echo "$target already exists do you want to overwrite? (y/n) "
+            read -e ans
+            [[ ! $ans == "y" ]] && exit 1
+        fi
+        usesudo=""
+        [[ $(stat -c "%U" $dir) == "root" ]] && usesudo=sudo && echo link target directory owned by root requires sudo
+        if $usesudo ln -fns $builder/build $target; then
+            if [[ ! $(command -v $cmd) ]]; then
+            echo FATAL: link failed $cmd not found in path 
+            else  
+            echo install success: link $target created
+            ls -ls $target
+            echo now try running: \'$cmd -h\' now 
+            fi
+        else 
+            echo Error creating link
+            echo if \': Permission denied\' 'then' run \'sudo ./install\'
+        fi
+
+
+    else
+        echo "Install failed: $dir not in current path"
+        echo $PATH
+        echo "link to script not created. your install options are:"
+        echo "1. add $dir to your PATH" 
+        echo "2. rerun this script using a directory in the system path (e.g ./install /usr/bin build)"
+        echo "3. add the following export somewhere in your shell (e.g. ~/.bashrc)"
+        echo "        export UDIB=$builder/build"
+        echo '        and then use $UDIB to invoke the build script' 
+        echo '        ( e.g  $UDBI -e mybuild.env myimagename)'
+    fi
+
+}
+
+# if script was executed then call the function
+(return 0 2>/dev/null) || install "$@"

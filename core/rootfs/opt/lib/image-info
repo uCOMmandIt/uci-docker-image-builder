@@ -1,0 +1,10 @@
+#!/bin/bash
+if [[ -f /opt/image.info ]]; then
+echo -e "\n--------- image info found at /opt/image.info----------" 
+cat /opt/image.info
+echo -e "\n****************************" 
+else 
+echo no image information found at /opt/image.info
+echo "you can place one at 'init/image.info' in your source (src) directory"
+echo "to be included in the image"
+fi

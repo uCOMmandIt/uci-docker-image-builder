@@ -1,0 +1,10 @@
+quiet () {
+ if  [ -n "$VERBOSE" ]; then $@; fi  
+}
+silence() {
+    if [ -n "$VERBOSE" ] ; then
+        "$@"
+    else
+       "$@" > /dev/null
+    fi
+}

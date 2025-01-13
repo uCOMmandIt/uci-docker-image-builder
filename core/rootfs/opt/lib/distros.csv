@@ -1,0 +1,7 @@
+# valid distros list
+# the distro must be the name used in /etc/os-release
+# <distro>,<core/default docker image name>,<install command>,<update command>
+alpine, alpine, apk add --no-cache     ,      apk update
+debian, debian, apt-get install -y, apt-get update
+arch, archlinux, pacman -S --noconfirm --needed, pacman -Syu
+ubuntu, ubuntu, apt-get install -y, apt-get update 

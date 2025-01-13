@@ -1,0 +1,33 @@
+#!/bin/bash
+cat <<HELP
+--------- ENTRYPOINT HELP ----------
+entrypoint commands are shell, maphostid, help, image, script and a custom command (start, by default)
+otherwise you can pass any shell command such as 'ls -la'
+
+----- Custom Command (start) -------------
+
+the current container custom command is > ${ENTRYPOINT_CMD:-start}
+and the script/binary that command runs is ${ENTRYPOINT_CMD_PATH:-$BIN_DIR/start}
+
+you can replace this start script with your own or any binary
+placed at init/opt/bin/start in your build source directory
+or set the  \$ENTRYPOINT_CMD_PATH and (optionally) the \$ENTRYPOINT_CMD variables
+
+---------- script ---------------
+you can pipe a script from the host to container with this command
+
+script  < test.sh
+
+if you use a heredoc you can delay variable substition 
+until the command is run in container.
+
+script  << "SCRIPT"
+echo $BIN_DIR
+SCRIPT
+
+----- Overwrite Entrypoint
+It is also possible to completely override the container entrypoint with your own
+$BIN_DIR/entrypoint script but is not recommmended as then a bash login shell is
+assured (unless you see to it) and thus critical runtime environment variables 
+will not be set
+HELP

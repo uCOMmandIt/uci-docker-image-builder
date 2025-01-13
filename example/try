@@ -1,0 +1,5 @@
+#!/bin/bash
+echo trying example image
+echo mounting /opt from container at $PWD/mnt/opt
+echo will open a shell by default
+udib try -m opt ${@:-shell} $@

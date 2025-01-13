@@ -1,0 +1,5 @@
+# PACKAGES
+RUN --mount=type=bind,source=.src/packages,target=/build \
+<<eot
+.INCLUDE packages.tpl  
+eot

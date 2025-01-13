@@ -1,0 +1,16 @@
+#!/bin/bash 
+echo "------------ creating Dockfile from template in Dockerfile.d -------------"
+
+mkdir -p $BDIR/.src
+
+[[ -f $BUILD_ENV_FILE ]] && source "$BUILD_ENV_FILE" && echo using $BUILD_ENV_FILE when building Dockerfile
+
+pushd $(dirname "$(realpath "$BASH_SOURCE")") > /dev/null || return 1
+source <(../lib/bash-tpl Dockerfile.tpl ) | grep -v '^# ' > ../Dockerfile
+if [[ $VERBOSE ]]; then
+  echo -e "\n#### Dockerfile to use from template ####\n"
+  cat $BDIR/Dockerfile
+  echo -e "\n#### end Dockerfile to use from template ####"
+fi
+echo "done ------- creating Dockfile from template in Dockerfile.d -------------"
+popd > /dev/null || return 2
