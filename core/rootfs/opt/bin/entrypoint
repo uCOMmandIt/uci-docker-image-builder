@@ -2,14 +2,16 @@
 # https://stackoverflow.com/a/43267603/4695378
 # env > /tmp/passed.env
 cat /proc/self/environ > /tmp/passed.env
-source /opt/core_run.env
+source /opt/core-run.env
+
+[[ $LOGIN_SHELL == true ]] && $_login=-l || unset $_login
 
 cmd=$1
 case "$cmd" in
 
 maphostid)
 shift 1
-/bin/bash -l -c '$LIB_DIR/user-set-host-id $@' $0 "$@"
+/bin/bash $_login -c '$LIB_DIR/user-set-host-id $@' $0 "$@"
 ;;
 idle)
 echo container put in idle mode, use docker terminal to access
@@ -17,30 +19,32 @@ sleep infinity
 ;;
 image)
 shift 1
-/bin/bash -l -c '$LIB_DIR/image-info $@' $0 "$@"
+/bin/bash $_login -c '$LIB_DIR/image-info $@' $0 "$@"
 ;;
 shell)
 shift 1
 _shell_=/bin/bash
 [[ $1 ]] && _shell_="/bin/su $1"
-$_shell_ -c "cd ${DEFAULT_DIR:-/}; exec bash -l"
+$_shell_ -c "cd ${DEFAULT_DIR:-/}; exec bash $_login"
 ;;
 help)
 $BIN_DIR/entrypoint-help
 ;;
 script)
 shift 1
-cat | /bin/bash -l
+cat | /bin/bash $_login
 ;;
 ${ENTRYPOINT_CMD:-start})
 shift 1
-exec /bin/bash -l -c '${ENTRYPOINT_CMD_PATH:-$BIN_DIR/${ENTRYPOINT_CMD:-start}} $@' $0 "$@"
+cmd=${ENTRYPOINT_CMD_PATH:-$BIN_DIR/${ENTRYPOINT_CMD:-start}}
+if [[ ! -f $cmd ]]; then echo -e "FATAL: no file for command $cmd $@ \nnothing to execute; exit 1"; fi
+exec /bin/bash $_login -c ''$cmd' $@' $0 "$@"
 ;;
 *)
 echo "--- command passed to container: $* ---"
 echo -e "output:\n"
 if [ -n "$*" ]; then
-    if ! /bin/bash -l -c '$@' $0 "$@" ; then
+    if ! /bin/bash $_login -c '$@' $0 "$@" ; then
     $BIN_DIR/entrypoint-help
     fi
 echo -e "\n------------------------------\n"    

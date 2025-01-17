@@ -28,6 +28,6 @@ SCRIPT
 ----- Overwrite Entrypoint
 It is also possible to completely override the container entrypoint with your own
 $BIN_DIR/entrypoint script but is not recommmended as then a bash login shell is
-assured (unless you see to it) and thus critical runtime environment variables 
+NOT assured (unless you see to it) and thus critical runtime environment variables 
 will not be set
 HELP

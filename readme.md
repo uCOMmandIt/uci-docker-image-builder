@@ -49,7 +49,7 @@ It is highly recommened to spin up a [portainer](https://www.portainer.io/) cont
 
 ## Getting started
 
-The best way to use this script/repository is to copy the `example/` subdirectory elsewhere
+The best way to use this script/repository is to copy the `example/` subdirectory elsewhere, for example to `/opt/myimage` 
 
 ```
 /bin/cp -R example/ /opt/myimage/
@@ -67,14 +67,15 @@ Once you know more about how to modify your `/opt/myimage` folder then you will 
 
 The UCI docker build (udbuild) script makes building images easy by obfuscating the Dockerfile
 
-The Dockerfile is assembled at build time via a bunch of templates.  The essence of the Dockerfile created are three RUN (layers) commands explained here.  
+The Dockerfile is assembled at build time via a bunch of templates.  The essence of the Dockerfile created are three RUN layers and one COPY layer explained here.  
 After you build an image you can see the Dockerfile the script created.  It will be in the root of the builder repo
 
-1. CORE: Installs core packages and environment and only supports base images that run the distros alpine, arch, ubuntu or debian.  
-2. PACKAGES: Installs the packages you specify for your custom image via a distro's package manager plus a script 
-3. INIT: Intializes the image with bash script(s) that you write.  
+1. RUN -CORE: Installs core packages and environment and only supports base images that run the distros alpine, arch, ubuntu or debian.  
+2. RUN - PACKAGES: Installs the packages you specify for your custom image via a distro's package manager plus a script you can write
+3. COPY - ROOTFS: Copies the rootfs folder in your build source (src/) to the root of the container
+4. RUN - INIT: Intializes the container image with bash script(s) that you write.  
 
-The reasoning behind this structure is that the CORE and PACKAGE (RUN/layers) once set will rarely change as you develop and test your image and thus when you rebuild only the INIT layer will be rebuilt signficantly speeding up build times and thus your dev cycle.
+The reasoning behind this structure is that the CORE and PACKAGE (RUN/layers) once set will rarely change as you develop and test your image and thus when you rebuild only the ROOTFS layer and INIT layers will be rebuilt signficantly speeding up build times and thus your dev cycle. And if files in in the src/rootfs folder don't change then even that layer will not be rebuilt.
 
 You primarily create your custom image editing a 'source' directory (see below) typically a `src/` subdirectory within your image folder (e.g `/opt/myimage/src`).    
 
@@ -84,16 +85,15 @@ Once the script "assembles" all the pieces (i.e. the Dockerfile) it uses docker'
 
 The default build uses the official alpine image as a base and saves a local generated name (e.g. myimage.latest) but you can specify any existing image as the `BASE_IMAGE` the only requirment is that that base image must be running either alpine,arch.debian or ubuntu distros.
 
-The repo also supports building both amd64 and arm64 architecture variants pushing those to your account at hub.docker.com or an alternate private images repository (like a self hosted gitea or github)
+This builder repo also supports building both amd64 and arm64 architecture variants pushing those to your account at hub.docker.com or an alternate private images repository (like a self hosted gitea or github)
 
-A good way to get going is to read carefully the `udib help` and to read the `env.example` file in the `/example`.   
+A good way to get going is to read carefully the `udib help` and then look at your `opt/myimage` folder you already created including reading the `readme.md` and `env.example` files therein.   
 
 ## Customizing your image 
 
 ### Environment
 
-From inside your `/opt/myimage` folder (see getting started) copy the `env.example` file to `.env`.  By default the builder will look for and load this file `.env`.
-In general it is easier to set the environment variables in the `.env` file rather then via their corresponding command line options, still the commandline options make it easy to override the environment variable for a one off variation of a `.env` file. See again the help.
+From inside your e.g. `/opt/myimage` folder (see getting started) copy the `env.example` file to `.env`.  By default the builder will look for and load this file `.env`. In general it is easier to set the environment variables in the `.env` file rather then via their corresponding command line options, still the commandline options make it easy to override the environment variable for a one off variation of a `.env` file. See again the help.
 
 In the  `.env` you can now uncomment and set variables to begin to "customize" how the script runs.
 
@@ -102,7 +102,7 @@ The next one might be `BASE_IMAGE` which will tell the script which image to sta
 
 ### Source
 
-So once you have your environment set you need to focus on the `src/` subdirectory
+So once you have your environment set you need to focus on the `src/` subdirectory in `/opt/myimage`
 
 ```
 src/
@@ -110,42 +110,47 @@ src/
 │   ├── <container user name>  optional
 │   └── init.sh
 ├── packages
-│   ├── packages.sh
-│   ├── repositories.sh
-│   ├── system
+│   ├── packages.sh <optional>
+│   ├── repositories.sh <optional>
+│   ├── system <optional>
 │   │   ├── 01-base.pkgs
 │   │   └── 02-more.pkgs.off
-│   └── system.pkgs
+│   └── system.pkgs <either this file or system folder above>
 └── rootfs
     └── opt
         ├── bin
-        │   └── mycmd
+        │   └── start <or use your own name, e.g. myapp>
         ├── env
         │   ├── run.env
-        │   └── run.env.example
         ├── image.info
-        ├── lib
-        └── myapp
+        ├── lib <may add more script files here>
+        ├── data <or your own name, a folder than can keep persistant data from the container mounted on the host>
+        └── myapp <optional may contain more scripts/code>
 ```
 
 #### packages
 
-The subdirectory `packages/` will be mounted during the PACKAGE RUN mentioned above (2).  Any package name found in a *system.pkgs file will be installed as well as any *.pkgs files inside the /system subdirectory.  This make is easy to compartmentalize loading packages and to turn them off by simply adding .off the the file name.  Once those "system" packages have been loaded then first the `repositories.sh` and then `packages.sh` scripts will be run if they exist.  Here you can customize what other non system packages need to be installed.  For example you may need to install php modules or maybe node modules. Restrict yourself to just loading stuff and save any setup and initialization for the INIT RUN layer (3).  
+The subdirectory `packages/` will be mounted during the PACKAGE RUN mentioned above (2).  The package layer (see package.tpl) first executes a `repositories.sh` script.  Here you can change, amend, customize the system repositories.  Like add a local custom repostory or change to alternate repository (like edge with alpine).
+Then any package name found in a *system.pkgs file will be installed as well as any *.pkgs files inside the /system subdirectory.  This make is easy to compartmentalize loading packages and to turn them off by simply adding .off the the file name.  Once those "system" packages have been the `packages.sh` script will be run if it exists.  Here you can customize what other non system packages need to be installed.  For example you may need to install php modules or maybe node modules. Restrict yourself to just loading stuff and save any setup and initialization for the INIT RUN layer (3).  
 
 see `Dockerfile.d/packages.tpl`  to see and understand how the steps above are executed.
 
 #### init
 
-TODO
+TODO:
 
 ### rootfs
 
-TODO
+TODO:
+
+This folder is copied to root of container.  This allows you to add to image any file or any folder and also to overwrite any existing file.   The builder user the /opt folder for for the entrypoint script and in general all the customizing.  It makes is easier to separte the customization from files and folders added by system packages and the OS itself.  It makes it easier to develop as you can mount the entire opt directory on your host dev machine and troubleshoot editing scripts etc in a trial container (see Development below)
+
+## Developing
 
 
 ## Publishing
 
-TODO
+TODO:
 
 tldr use docker login for first logging into to your remote repositories like hub.docker.com, github, gitea/forgejo
 
@@ -154,6 +159,6 @@ tldr use docker login for first logging into to your remote repositories like hu
 
 To update the builder go to `/<install parent>/uci-docker-image_builder` and execute `git pull origin main`
 
-## Deploying your image with a container
+## Deploying
 
-TODO
+TODO:

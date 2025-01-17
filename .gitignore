@@ -9,3 +9,4 @@ Dockerfile
 example/mnt
 example/logs/**
 test/
+build.env
