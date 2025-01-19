@@ -45,7 +45,8 @@ eot
 % fi
 
 # default command
-ENTRYPOINT ["/opt/bin/entrypoint"]
+# ENTRYPOINT ["/opt/bin/entrypoint"]
+ENTRYPOINT ["<%${ENTRYPOINT:-/opt/bin/entrypoint}%>"]
 # default 
 WORKDIR <% ${WORKDIR:-/opt} %>
 

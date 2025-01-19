@@ -244,7 +244,8 @@ if [[ $BASE_IMAGE ]]; then
     return 2
   fi
  else
-   echo neither base image nor distro is set using default alpine image
+   echo "WARNING: neither base image (BASE_IMAGE) nor distro (LINUX_DISTRO) is set"
+   echo -e "using the default base image alpine:latest\n"
    BASE_IMAGE=alpine
    LINUX_DISTRO=alpine
   fi 
@@ -265,11 +266,18 @@ if ! get_build_src > /dev/null ; then
     echo -e "\e[1;31mNOTE: use '_core_' to explicitly build with only the UCI core repo\e[1;37m"
     return 2
     else 
-    echo "Do you want to build with only the UCI core" 
-    read  -n 1 -p "instead? [y]=>" REPLY
-    [[ $REPLY != "y" ]] && echo -e "\n" && return 2
-    BUILD_SRC="_core_"
-    echo -e "\n\e[1;31mNOTE: use '_core_' to explicitly build with only the UCI core\e[1;37m"
+    echo -e "\nFATAL: can not find not a build source directory"
+    echo "run udib from a folder with src/ or set BUILD_SRC or use -s"
+    echo "if you only want to build the core (no source) you must use"
+    echo "BUILD_SRC=_core_ or -s _core_" 
+    echo "see udib help"
+    echo "--------------------"
+    return 2
+    # so Do you want to build with only the UCI core" 
+    # read  -n 1 -p "instead? [y]=>" REPLY
+    # [[ $REPLY != "y" ]] && echo -e "\n" && return 2
+    # BUILD_SRC="_core_"
+    # echo -e "\n\e[1;31mNOTE: use '_core_' to explicitly build with only the UCI core\e[1;37m"
   fi
 fi
 
